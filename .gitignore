@@ -24,4 +24,4 @@ jspm_packages/
 .env.local
 
 # Typescript transpilation folders
-build
+dist
