@@ -20,3 +20,7 @@ export function validateOrThrow<T>(
 
   return value;
 }
+
+export function isSnowflake(value: string): boolean {
+  return /^[0-9]{18}$/.test(value);
+}
