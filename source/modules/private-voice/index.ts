@@ -84,7 +84,11 @@ export class PrivateVoice {
       if (!parent || !newState.member) return;
 
       const temporaryChannel = await newState.guild.channels.create(
-        this._generateChannelName(newState.member),
+        parent.generateName({
+          member: newState.member,
+          guild: newState.guild,
+          count: parent.children.size,
+        }),
         { parent: parent.categoryId, type: 'GUILD_VOICE' }
       );
 
@@ -165,16 +169,5 @@ export class PrivateVoice {
     });
 
     return fetchedChannel?.type === 'GUILD_VOICE' ? fetchedChannel : undefined;
-  }
-
-  /** Generates a name for a temporary voice channel with 100 characters max. */
-  private _generateChannelName(member: GuildMember): string {
-    let name = `Call de ${member.user.username}`;
-
-    if (name.length > 100) {
-      name = name.substring(0, 100);
-    }
-
-    return name;
   }
 }
