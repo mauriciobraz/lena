@@ -12,7 +12,9 @@ async function main(): Promise<void> {
   );
 
   DIService.container = Container;
-  createClient().login(validateOrThrow(process.env.DISCORD_TOKEN, Boolean));
+
+  const client = await createClient();
+  client.login(validateOrThrow(process.env.DISCORD_TOKEN, Boolean));
 }
 
 if (require.main === module) main();

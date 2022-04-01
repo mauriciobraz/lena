@@ -1,9 +1,10 @@
-import { Intents } from 'discord.js';
+import { Intents, PermissionString } from 'discord.js';
 import { ClientOptions } from 'discordx';
-import { isSnowflake, validateOrThrow } from '../helpers';
-import { IParentChannelOptions } from '../services/temporary-voice';
 
-export const DiscordXConfiguration: ClientOptions = {
+import { isSnowflake, validateOrThrow } from '../helpers';
+
+/** Options for the `Discord.Client`. */
+export const CLIENT_OPTIONS: ClientOptions = {
   botGuilds: [validateOrThrow(process.env.DISCORD_MAIN_GUILD_ID, isSnowflake)],
   intents: [
     Intents.FLAGS.GUILDS,
@@ -12,13 +13,19 @@ export const DiscordXConfiguration: ClientOptions = {
   ] as number[],
 };
 
-export const TemporaryVoiceConfiguration: IParentChannelOptions = {
-  autoDeleteIfEmpty: true,
-  kickBotsIfAllUsersLeave: true,
-  createOnCategory: validateOrThrow(
-    process.env.TEMPORARY_CATEGORY_ID,
-    isSnowflake
-  ),
+/**
+ * Permissions that are required to use the bot. This is used to prevent errors,
+ * if you add a new command, check what permissions you need and add them here.
+ */
+export const REQUIRED_PERMISSIONS: PermissionString[] = [
+  // General permissions
+  'SEND_MESSAGES',
+  'MANAGE_MESSAGES',
+  'READ_MESSAGE_HISTORY',
+  'EMBED_LINKS',
 
-  channelNameFormat: ({ member }) => `Call de ${member.user.username}`,
-};
+  // PrivateVoice
+  'MANAGE_CHANNELS',
+  'VIEW_CHANNEL',
+  'MOVE_MEMBERS',
+];

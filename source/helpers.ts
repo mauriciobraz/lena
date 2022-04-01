@@ -21,6 +21,7 @@ export function validateOrThrow<T>(
   return value;
 }
 
+/** Checks if the given value is a valid snowflake with regex. */
 export function isSnowflake(value: string): boolean {
-  return /^[0-9]{18}$/.test(value);
+  return /^[0-9]{17,18}$/.test(value);
 }
