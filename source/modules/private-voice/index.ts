@@ -92,6 +92,7 @@ export class PrivateVoice {
         { parent: parent.categoryId, type: 'GUILD_VOICE' }
       );
 
+      parent.children.set(newState.member.id, temporaryChannel.id);
       await newState.setChannel(temporaryChannel);
 
       return;
@@ -127,7 +128,6 @@ export class PrivateVoice {
       );
 
       if (canDeleteTemporaryChannel) {
-        parent.children.delete(oldState.channel.id);
         await childChannel.delete();
       }
 
