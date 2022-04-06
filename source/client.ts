@@ -1,16 +1,32 @@
 import G from 'glob';
-import { Collection } from 'discord.js';
+import { Collection, PermissionString } from 'discord.js';
 import { Client } from 'discordx';
 import { resolve } from 'path';
 
-import { CLIENT_OPTIONS } from './config/configuration';
-import { validateOrThrow, isSnowflake } from './helpers';
+import { validateOrThrow, isSnowflake } from '@helpers/validators';
 import { PrivateVoice, DELETION_CHECKERS } from './modules/private-voice';
 
 const { TEMPORARY_CATEGORY_ID, TEMPORARY_ENTRY_CHANNEL_ID } = process.env;
 
+/**
+ * Required permissions for the bot to run, must check for all permissions
+ * when joining a new guild.
+ */
+export const REQUIRED_PERMISSIONS: PermissionString[] = [
+  'SEND_MESSAGES',
+  'MANAGE_MESSAGES',
+  'READ_MESSAGE_HISTORY',
+  'EMBED_LINKS',
+  'MANAGE_CHANNELS',
+  'VIEW_CHANNEL',
+  'MOVE_MEMBERS',
+];
+
 export async function createClient(): Promise<Client> {
-  const clientX = new Client({ ...CLIENT_OPTIONS });
+  const client = new Client({
+    botGuilds: [client => client.guilds.cache.map(guild => guild.id)],
+    intents: ['GUILDS', 'GUILD_MEMBERS', 'GUILD_VOICE_STATES'],
+  });
   await recursivelyImport(resolve(__dirname, 'modules', '**', '*.{js,ts}'));
 
   PrivateVoice.addNewParent({
@@ -20,12 +36,12 @@ export async function createClient(): Promise<Client> {
     generateName: ({ member }) => `Call de ${member.displayName}`,
   });
 
-  PrivateVoice.addNewDeleteCheckers(
+  PrivateVoice.addDeletionValidator(
     DELETION_CHECKERS.WHEN_EMPTY,
     DELETION_CHECKERS.WHEN_ONLY_BOT
   );
 
-  return clientX;
+  return client;
 }
 
 function recursivelyImport(path: string): Promise<any[]> {

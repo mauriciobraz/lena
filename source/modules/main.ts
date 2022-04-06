@@ -1,5 +1,6 @@
 import { ArgsOf, Client, Discord, On, Once } from 'discordx';
-import { REQUIRED_PERMISSIONS } from '../config/configuration';
+
+import { REQUIRED_PERMISSIONS } from '../client';
 
 @Discord()
 export class Main {

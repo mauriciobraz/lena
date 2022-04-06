@@ -29,7 +29,7 @@ export interface VoiceParent {
  * Function to add a new checkers that will be called when a new private channel
  * is requested to be deleted.
  */
-export type VoiceChildrenCheckFn = (
+export type VoiceChildrenValidatorFn = (
   member: GuildMember,
   channel: VoiceBasedChannel
 ) => boolean;
@@ -52,10 +52,11 @@ export const DELETION_CHECKERS = {
 @Discord()
 export class PrivateVoice {
   private static readonly _parents = new Collection<string, VoiceParent>();
-  private static readonly _deleteCheckers = new Array<VoiceChildrenCheckFn>();
+  private static readonly _deletionValidators =
+    new Array<VoiceChildrenValidatorFn>();
 
   @On('channelDelete')
-  async onChannelDelete([channel]: ArgsOf<'channelDelete'>, client: Client) {
+  async onChannelDelete([channel]: ArgsOf<'channelDelete'>, _client: Client) {
     const parent = PrivateVoice._parents.find(p => p.children.has(channel.id));
     parent?.children.delete(channel.id);
   }
@@ -120,10 +121,10 @@ export class PrivateVoice {
         );
       }
 
-      const canDeleteTemporaryChannel = PrivateVoice._deleteCheckers.every(
-        checker => {
+      const canDeleteTemporaryChannel = PrivateVoice._deletionValidators.every(
+        validator => {
           if (!oldState.member) return false;
-          return checker(oldState.member, childChannel);
+          return validator(oldState.member, childChannel);
         }
       );
 
@@ -139,8 +140,8 @@ export class PrivateVoice {
    * Adds a new checker that will be called when a private voice channel should
    * be deleted.
    */
-  static addNewDeleteCheckers(...checkers: VoiceChildrenCheckFn[]): void {
-    PrivateVoice._deleteCheckers.push(...checkers);
+  static addDeletionValidator(...checkers: VoiceChildrenValidatorFn[]): void {
+    PrivateVoice._deletionValidators.push(...checkers);
   }
 
   /**
@@ -156,7 +157,7 @@ export class PrivateVoice {
    * return `undefined` if the member doesn't have a child channel or
    * the channel type is not `GUILD_VOICE` for some reason.
    */
-  static async getChildChannel(
+  static async getChildVoiceChannel(
     member: GuildMember
   ): Promise<VoiceBasedChannel | undefined> {
     const parent = this._parents.find(p => p.children.has(member.id));
