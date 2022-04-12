@@ -29,17 +29,17 @@ export async function createClient(): Promise<Client> {
   });
   await recursivelyImport(resolve(__dirname, 'modules', '**', '*.{js,ts}'));
 
-  PrivateVoice.addNewParent({
-    children: new Collection<string, string>(),
-    parentId: validateOrThrow(TEMPORARY_ENTRY_CHANNEL_ID, isSnowflake),
-    categoryId: validateOrThrow(TEMPORARY_CATEGORY_ID, isSnowflake),
-    generateName: ({ member }) => `Call de ${member.displayName}`,
-  });
+  // PrivateVoice.addNewParent({
+  //   children: new Collection<string, string>(),
+  //   parentId: validateOrThrow(TEMPORARY_ENTRY_CHANNEL_ID, isSnowflake),
+  //   categoryId: validateOrThrow(TEMPORARY_CATEGORY_ID, isSnowflake),
+  //   generateName: ({ member }) => `Call de ${member.displayName}`,
+  // });
 
-  PrivateVoice.addDeletionValidator(
-    DELETION_CHECKERS.WHEN_EMPTY,
-    DELETION_CHECKERS.WHEN_ONLY_BOT
-  );
+  // PrivateVoice.addDeletionValidator(
+  //   DELETION_CHECKERS.WHEN_EMPTY,
+  //   DELETION_CHECKERS.WHEN_ONLY_BOT
+  // );
 
   return client;
 }
