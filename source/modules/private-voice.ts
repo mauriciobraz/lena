@@ -1,15 +1,39 @@
-import { Collection, Guild, GuildMember, VoiceBasedChannel } from 'discord.js';
-import { ArgsOf, Client, Discord, On } from 'discordx';
+import { PrismaClient } from '@prisma/client';
+import {
+  Channel,
+  Collection,
+  CommandInteraction,
+  Guild,
+  GuildMember,
+  Snowflake,
+  VoiceBasedChannel,
+} from 'discord.js';
+import {
+  ArgsOf,
+  Client,
+  Discord,
+  On,
+  Slash,
+  SlashGroup,
+  SlashOption,
+} from 'discordx';
+import { Service } from 'typedi';
+
+import { PrivateVoiceQueries } from '../queries/private-voice';
 
 /** Generates the name of the voice channel. */
-export type NameGenerator = (options: {
-  /** Owner of the private channel. */
+export type NameGeneratorFn = (options: {
   member: GuildMember;
-  /** Guild the owner is in. */
   guild: Guild;
-  /** Quantity of private channels existing in the parent. */
   count: number;
 }) => string;
+
+/** Options for creating a child voice channel. */
+export type VoiceChild = {
+  channelId: Snowflake;
+  orphaned: boolean;
+  ownerId: Snowflake;
+};
 
 /**
  * Interface for parent channels (entry channels) listeners and their children.
@@ -17,158 +41,212 @@ export type NameGenerator = (options: {
 export interface VoiceParent {
   /** Category to create new private channels in. */
   categoryId?: string;
+
   /** Collection of `owner` to `private channel id`. */
-  children: Collection<string, string>;
+  children: VoiceChild[];
+
   /** The channel to listen for new private channels create requests. */
   parentId: string;
-  /** Function that should be added `#PrivateVoice.changeChannelNamer` */
-  generateName: NameGenerator;
+
+  /** Function to generate the name of the private channel. */
+  generateName: NameGeneratorFn;
 }
 
 /**
  * Function to add a new checkers that will be called when a new private channel
  * is requested to be deleted.
  */
-export type VoiceChildrenValidatorFn = (
-  member: GuildMember,
-  channel: VoiceBasedChannel
-) => boolean;
+export type ChildDeletionValidatorFn = (options: {
+  member: GuildMember;
+  channel: VoiceBasedChannel;
+  orphaned: boolean;
+}) => boolean;
 
-/** Pre-configured checkers for deleting private channels. */
-export const DELETION_CHECKERS = {
-  /** When the reaches 0 members, the channel will be deleted. */
-  WHEN_EMPTY: (_member: GuildMember, channel: VoiceBasedChannel) =>
-    channel.members.size === 0,
+export const DEFAULT_NAME_GENERATOR: NameGeneratorFn = ({ member }) =>
+  `Call de ${member.displayName}`;
 
-  /** Similar to `WHEN_EMPTY`, but checks if only bots remain. */
-  WHEN_ONLY_BOT: (_member: GuildMember, channel: VoiceBasedChannel) =>
-    channel.members.every(member => member.user.bot),
-};
+const GROUP_NAME = 'private-voice';
 
 /**
  * Module for managing private voice channels. This module is responsible for
  * listening for new private voice channels create requests and creating them.
  */
 @Discord()
+@SlashGroup({ name: GROUP_NAME })
+@Service()
 export class PrivateVoice {
-  private static readonly _parents = new Collection<string, VoiceParent>();
-  private static readonly _deletionValidators =
-    new Array<VoiceChildrenValidatorFn>();
+  private static readonly _deletionValidators: ChildDeletionValidatorFn[] = [];
 
-  @On('channelDelete')
-  async onChannelDelete([channel]: ArgsOf<'channelDelete'>, _client: Client) {
-    const parent = PrivateVoice._parents.find(p => p.children.has(channel.id));
-    parent?.children.delete(channel.id);
-  }
+  private static readonly _parents: Collection<string, VoiceParent> =
+    new Collection();
+
+  constructor(private readonly _prismaClient: PrismaClient) {}
 
   @On('voiceStateUpdate')
   async onVoiceStateUpdate(
     [oldState, newState]: ArgsOf<'voiceStateUpdate'>,
     client: Client
   ) {
+    const voiceChannelJoined = !oldState.channelId && !!newState.channelId;
+
+    const voiceChannelLeft = !!oldState.channelId && !newState.channelId;
+
     const voiceChannelMoved =
       !!oldState.channelId &&
       !!newState.channelId &&
       oldState.channelId !== newState.channelId;
 
-    const voiceChannelJoined = !oldState.channelId && !!newState.channelId;
-
-    const voiceChannelLeft = !!oldState.channelId && !newState.channelId;
-
-    // In case the user is joining a voice channel, we check if there is a
-    // parent channel to create a new private channel and move the user to it.
-    if (voiceChannelJoined || voiceChannelMoved) {
-      const parent = PrivateVoice._parents.find(
-        p => p.parentId === newState.channelId
-      );
-
-      if (!parent || !newState.member) return;
-
-      const temporaryChannel = await newState.guild.channels.create(
-        parent.generateName({
-          member: newState.member,
-          guild: newState.guild,
-          count: parent.children.size,
-        }),
-        { parent: parent.categoryId, type: 'GUILD_VOICE' }
-      );
-
-      parent.children.set(newState.member.id, temporaryChannel.id);
-      await newState.setChannel(temporaryChannel);
-
-      return;
-    }
-
-    // If the member left a channel or moved to a new one we check if it's a
-    // parent channel, and if so, we delete it.
+    // When the members leaves or moves to another channel, we need to check if
+    // the channel is a `PVC` and if so, we need to delete it.
     if (voiceChannelLeft || voiceChannelMoved) {
       if (!oldState.channel || !oldState.member) return;
 
-      const parent = PrivateVoice._parents.find(p =>
-        p.children.some(c => c === oldState.channelId)
-      );
-
-      if (!parent) return;
-
-      const childChannelId = parent.children.get(oldState.member.id);
-      if (!childChannelId) return;
-
-      const childChannel = await client.channels.fetch(childChannelId);
-
-      if (childChannel?.type !== 'GUILD_VOICE') {
-        return console.warn(
-          `TemporaryVoice: Expected channel ${childChannelId} to be "GUILD_VOICE" but got "${childChannel?.type}" instead.`
+      if (oldState.channel && oldState.member) {
+        const oldStateParent = PrivateVoice._parents.find(p =>
+          p.children.some(children => children.channelId === oldState.channelId)
         );
-      }
 
-      const canDeleteTemporaryChannel = PrivateVoice._deletionValidators.every(
-        validator => {
-          if (!oldState.member) return false;
-          return validator(oldState.member, childChannel);
+        if (oldStateParent) {
+          const childChannelObj = oldStateParent.children.find(
+            children => children.channelId === oldState.channelId
+          );
+
+          if (!childChannelObj) return;
+
+          const childChannel = await client.channels.fetch(
+            childChannelObj.channelId
+          );
+
+          if (childChannel?.type !== 'GUILD_VOICE') {
+            return console.warn(
+              `TemporaryVoice: Expected channel ${childChannelObj} to be "GUILD_VOICE" but got "${childChannel?.type}" instead.`
+            );
+          }
+
+          const shouldDelete = PrivateVoice._deletionValidators.every(
+            validator =>
+              validator({
+                channel: childChannel,
+                member: oldState.member!,
+                orphaned: childChannelObj.orphaned,
+              })
+          );
+
+          if (shouldDelete) {
+            oldStateParent.children.splice(
+              oldStateParent.children.findIndex(
+                children => children.channelId === childChannelObj.channelId
+              ),
+              1
+            );
+            await childChannel.delete();
+          }
         }
-      );
-
-      if (canDeleteTemporaryChannel) {
-        await childChannel.delete();
       }
+    }
 
+    // If the member joined or moved to an parent channel, we create a new
+    // private channel for it based on the parent channel configuration.
+    if (voiceChannelJoined || voiceChannelMoved) {
+      const newStateParent = PrivateVoice._parents.find(parent => {
+        return parent.parentId === newState.channelId;
+      });
+
+      if (newStateParent && newState.member) {
+        const newName = newStateParent.generateName({
+          member: newState.member,
+          guild: newState.guild,
+          count: newStateParent.children.length + 1,
+        });
+
+        const newChannel = await newState.guild.channels.create(newName, {
+          parent: newStateParent.categoryId,
+          type: 'GUILD_VOICE',
+        });
+
+        newStateParent.children.push({
+          channelId: newChannel.id,
+          orphaned: false,
+          ownerId: newState.member.id,
+        });
+        await newState.setChannel(newChannel);
+      }
+    }
+  }
+
+  @Slash('configure', {
+    description: 'Configura o módulo de canais de voz privados.',
+  })
+  @SlashGroup(GROUP_NAME)
+  async handleConfigure(
+    @SlashOption('channel')
+    channel: Channel,
+
+    @SlashOption('category-id', { type: 'STRING', required: false })
+    categoryId: string,
+
+    @SlashOption('allow-change-name', { type: 'BOOLEAN', required: false })
+    allowChangeName: boolean = false,
+
+    interaction: CommandInteraction
+  ): Promise<void> {
+    if (!interaction.deferred)
+      await interaction.deferReply({ ephemeral: true });
+
+    if (!interaction.inGuild() || !interaction.guild) {
+      await interaction.editReply(
+        'Você deve estar em um servidor para usar este comando.'
+      );
       return;
     }
+
+    if (!channel.isVoice()) {
+      await interaction.editReply('O canal deve ser um canal de voz.');
+      return;
+    }
+
+    if (!categoryId) {
+      const category = await interaction.guild.channels.create(
+        'Canais de voz privados',
+        { type: 'GUILD_CATEGORY' }
+      );
+      categoryId = category.id;
+    }
+
+    await PrivateVoiceQueries.configure(this._prismaClient, {
+      allowChangeName,
+      categoryId,
+      guildId: interaction.guild.id,
+      parentId: channel.id,
+    });
+
+    PrivateVoice.createParent({
+      categoryId,
+      children: [],
+      generateName: DEFAULT_NAME_GENERATOR,
+      parentId: channel.id,
+    });
+
+    await interaction.editReply(
+      'Canal de voz privado configurado com sucesso.'
+    );
   }
 
   /**
    * Adds a new checker that will be called when a private voice channel should
    * be deleted.
    */
-  static addDeletionValidator(...checkers: VoiceChildrenValidatorFn[]): void {
-    PrivateVoice._deletionValidators.push(...checkers);
+  static addDeletionValidators(
+    ...validators: ChildDeletionValidatorFn[]
+  ): void {
+    this._deletionValidators.push(...validators);
   }
 
   /**
    * Adds the given parents to the collection of parents and starts listening
    * for new private channels create requests.
    */
-  static addNewParent(parent: VoiceParent): void {
-    PrivateVoice._parents.set(parent.parentId, parent);
-  }
-
-  /**
-   * Searchs for a child channel from the given member and returns it. Could
-   * return `undefined` if the member doesn't have a child channel or
-   * the channel type is not `GUILD_VOICE` for some reason.
-   */
-  static async getChildVoiceChannel(
-    member: GuildMember
-  ): Promise<VoiceBasedChannel | undefined> {
-    const parent = this._parents.find(p => p.children.has(member.id));
-
-    const childChannelId = parent?.children.get(member.id);
-    if (!childChannelId) return;
-
-    const fetchedChannel = await member.guild.channels.fetch(childChannelId, {
-      cache: true,
-    });
-
-    return fetchedChannel?.type === 'GUILD_VOICE' ? fetchedChannel : undefined;
+  static createParent(parent: VoiceParent): void {
+    this._parents.set(parent.parentId, parent);
   }
 }

@@ -1,5 +1,4 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// On `Guild` and `User`'s table you must use the Discord's id.
 
 generator client {
   provider = "prisma-client-js"
@@ -8,4 +7,26 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+model Guild {
+  id String @id @unique
+
+  PrivateVoiceConfig   PrivateVoiceConfig? @relation(fields: [privateVoiceConfigId], references: [id])
+  privateVoiceConfigId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PrivateVoiceConfig {
+  id String @id @unique @default(uuid())
+
+  Guilds          Guild[]
+  parentId        String
+  categoryId      String
+  allowChangeName Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
